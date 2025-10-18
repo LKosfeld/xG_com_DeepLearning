@@ -1,18 +1,18 @@
 #Carregamento dos dados----
 library(tidyverse)
 library(keras)
-bundesliga_preparados <- read.csv("dados/preparados/bundesliga_preparados.csv")
+todas_ligas_preparados <- read.csv("dados/preparados/todas_ligas_preparados.csv")
 
 #1. PREPARAÇÃO DOS DADOS----
 
-features_df <- bundesliga_preparados %>% select(-is_goal)
-labels_vector <- bundesliga_preparados$is_goal
+features_df <- todas_ligas_preparados %>% select(-is_goal, -where(is.numeric))
+labels_vector <- todas_ligas_preparados$is_goal
 
 ##Transforma features categóricas em numéricas (one-hot encoding) e cria a matriz
 features_matrix <- model.matrix(~ . -1, data = features_df)
 
 ##Divisão em conjuntos de treino (80%) e teste (20%)
-set.seed(18)
+set.seed(123)
 train_indices <- sample(1:nrow(features_matrix), size = 0.8 * nrow(features_matrix))
 
 train_data <- features_matrix[train_indices, ]
@@ -20,18 +20,6 @@ train_labels <- labels_vector[train_indices]
 test_data <- features_matrix[-train_indices, ]
 test_labels <- labels_vector[-train_indices]
 
-##Cálculo dos pesos para classes
-neg <- sum(train_labels == 0)
-pos <- sum(train_labels == 1)
-total <- neg + pos
-
-# Fórmula para balancear os pesos
-weight_for_0 <- (1 / neg) * (total / 2.0)
-weight_for_1 <- (1 / pos) * (total / 2.0)
-class_weights <- list("0" = weight_for_0, "1" = weight_for_1)
-
-cat("Pesos calculados -> Classe 0 (Não Gol):", round(weight_for_0, 2), 
-    "| Classe 1 (Gol):", round(weight_for_1, 2), "\n\n")
 
 
 #2. CONSTRUÇÃO DO MODELO----
@@ -39,23 +27,23 @@ build_model <- function() {
   model <- keras_model_sequential() %>%
     ##Camada de entrada com regularização L2
     layer_dense(units = 64, activation = "relu",
-                kernel_regularizer = regularizer_l2(0.01), 
+                kernel_regularizer = regularizer_l2(0.005), 
                 input_shape = c(ncol(train_data))) %>%
     ##Camada de Dropout
-    layer_dropout(rate = 0.2) %>% 
+    layer_dropout(rate = 0.3) %>% 
     
     ##Camada oculta com regularização L2
     layer_dense(units = 32, activation = "relu",
-                kernel_regularizer = regularizer_l2(0.01)) %>% 
+                kernel_regularizer = regularizer_l2(0.005)) %>% 
     ##Outra camada de Dropout
-    layer_dropout(rate = 0.2) %>% 
+    layer_dropout(rate = 0.3) %>% 
     
     ##Camada de saída com ativação sigmoid para probabilidade
     layer_dense(units = 1, activation = "sigmoid")
   
   model %>% compile(
     loss = "binary_crossentropy",
-    optimizer = optimizer_rmsprop(),
+    optimizer = optimizer_adam(learning_rate = 0.0005),
     metrics = c("accuracy", "AUC")
   )
   
@@ -63,7 +51,7 @@ build_model <- function() {
 }
 
 
-#4. VALIDAÇÃO CRUZADA K-FOLD----
+#3. VALIDAÇÃO CRUZADA K-FOLD----
 
 k <- 4
 num_epochs <- 150
@@ -104,7 +92,6 @@ for (i in 1:k) {
     batch_size = 16, 
     verbose = 0,
     callbacks = list(early_stop),
-    class_weight = class_weights
   )
   
   all_val_auc_histories[[i]] <- history$metrics$val_auc
@@ -142,7 +129,6 @@ history_final <- model_final %>% fit(
   epochs = ideal_epochs,
   batch_size = 16, 
   verbose = 1,
-  class_weight = class_weights
 )
 
 
@@ -151,32 +137,27 @@ results <- model_final %>% evaluate(test_data_scaled, test_labels)
 print(results)
 
 
-#6. Avaliação de Features----
-padrao_nomes <- "^(play_pattern\\.name|position\\.name|shot\\.type\\.name|shot\\.technique\\.name|shot\\.body_part\\.name)"
 
-aggregated_importance_df <- feature_importance_df %>%
-  ##Cria uma nova coluna 'feature_original' extraindo o prefixo de cada nome.
-  mutate(
-    feature_original = str_extract(feature, padrao_nomes)
-  ) %>%
-  mutate(
-    feature_original = ifelse(is.na(feature_original), feature, feature_original)
-  ) %>%
-  ##Agrupar1 pela feature original e somar as importâncias.
-  group_by(feature_original) %>%
-  summarise(total_importance = sum(importance)) %>%
-  ungroup()
+#6. COMPARAÇÃO DE CALIBRAÇÃO: GOLS REAIS vs. GOLS ESPERADOS (xG)----
 
-aggregated_importance_df %>%
-  arrange(desc(total_importance)) %>%
-  mutate(feature_original = reorder(feature_original, total_importance)) %>%
-  ggplot(aes(x = feature_original, y = total_importance)) +
-  geom_col(fill = "darkcyan") +
-  coord_flip() +
-  labs(
-    title = "Importância Agregada das Features Originais",
-    subtitle = "Soma da queda na AUC para cada grupo de features",
-    x = "Feature Original",
-    y = "Importância Total (Soma da Queda na AUC)"
-  ) +
-  theme_minimal()
+cat("\n--- Análise de Calibração Agregada ---\n")
+
+# Passo 1: Fazer as previsões de probabilidade no conjunto de teste
+predictions <- model_final %>% predict(test_data_scaled)
+
+# A saída de predict() é uma matriz, então convertemos para um vetor numérico
+predicted_probs <- as.vector(predictions)
+
+# Passo 2: Calcular a soma dos gols que realmente aconteceram no conjunto de teste
+gols_reais <- sum(test_labels)
+
+# Passo 3: Calcular a soma de todas as probabilidades previstas (o xG Total)
+gols_esperados <- sum(predicted_probs)
+
+# Passo 4: Apresentar os resultados para comparação
+cat("Total de Gols Reais no conjunto de teste: ", gols_reais, "\n")
+cat("Total de Gols Esperados (soma do xG) pelo modelo:", round(gols_esperados, 2), "\n")
+
+# Adicional: Calcular a diferença percentual
+diferenca_percentual <- ((gols_esperados - gols_reais) / gols_reais) * 100
+cat("Diferença Percentual: ", round(diferenca_percentual, 2), "%\n\n")

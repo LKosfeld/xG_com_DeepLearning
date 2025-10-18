@@ -100,3 +100,40 @@ preparar_dados_xg <- function(dataframe,
   # --- 3. Retornar o data frame (sempre) ---
   return(dados_processados)
 }
+
+
+
+
+criar_campo <- function() {
+  list(
+    # Linhas do campo
+    geom_rect(xmin = 0, xmax = 120, ymin = 0, ymax = 80, fill = NA, colour = "black", linewidth = 0.5),
+    
+    # Área grande
+    geom_rect(xmin = 0, xmax = 18, ymin = 18, ymax = 62, fill = NA, colour = "black", linewidth = 0.5),
+    geom_rect(xmin = 102, xmax = 120, ymin = 18, ymax = 62, fill = NA, colour = "black", linewidth = 0.5),
+    
+    # Área pequena
+    geom_rect(xmin = 0, xmax = 6, ymin = 30, ymax = 50, fill = NA, colour = "black", linewidth = 0.5),
+    geom_rect(xmin = 114, xmax = 120, ymin = 30, ymax = 50, fill = NA, colour = "black", linewidth = 0.5),
+    
+    # Círculo central
+    annotate("path",
+             x = 60 + 10 * cos(seq(0, 2 * pi, length.out = 100)),
+             y = 40 + 10 * sin(seq(0, 2 * pi, length.out = 100)),
+             colour = "black", linewidth = 0.5),
+    
+    # Ponto central
+    annotate("point", x = 60, y = 40, colour = "black", size = 1),
+    
+    # Balizas
+    geom_segment(aes(x = 0, y = 36, xend = 0, yend = 44), colour = "black", linewidth = 1),
+    geom_segment(aes(x = 120, y = 36, xend = 120, yend = 44), colour = "black", linewidth = 1),
+    
+    # Temas e ajustes visuais
+    theme_void(),
+    theme(panel.background = element_rect(fill = "#7fc97f", colour = NA),
+          legend.position = "bottom"),
+    coord_fixed()
+  )
+}
